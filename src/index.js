@@ -77,7 +77,11 @@ async function graylogRequest(endpoint, params = {}) {
 async function graylogRequestPut(endpoint) {
     try {
         const response = await axios.put(`${CONFIG.baseUrl}${endpoint}`, null, {
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-By': 'graylog-mcp'  // Required by Graylog CSRF protection
+            },
             auth: {
                 username: CONFIG.apiToken,
                 password: 'token'
