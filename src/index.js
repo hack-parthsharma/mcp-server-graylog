@@ -74,6 +74,26 @@ async function graylogRequest(endpoint, params = {}) {
     }
 }
 
+async function graylogRequestPut(endpoint) {
+    try {
+        const response = await axios.put(`${CONFIG.baseUrl}${endpoint}`, null, {
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            auth: {
+                username: CONFIG.apiToken,
+                password: 'token'
+            },
+            timeout: CONFIG.timeout
+        });
+        return response.data;
+    } catch (error) {
+        console.error(`[graylog-mcp] Error: ${endpoint}`, {
+            status: error.response?.status,
+            message: error.message
+        });
+        throw new Error(formatError(error, CONFIG.baseUrl));
+    }
+}
+
 // ============================================================================
 // OBSERVABILITY HELPERS
 // ============================================================================
@@ -342,6 +362,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ["traceId", "from", "to"]
                 }
+            },
+            {
+                name: "list_event_definitions",
+                description: "List all Graylog alert/event definitions with their ID, title, and enabled/disabled status. Use this to find the ID of an alert before enabling or disabling it.",
+                inputSchema: {
+                    type: "object",
+                    properties: {}
+                }
+            },
+            {
+                name: "enable_alert",
+                description: "Enable (schedule) a Graylog event definition / alert by its ID. Use list_event_definitions first to find the ID.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        id: {
+                            type: "string",
+                            description: "The event definition ID to enable (e.g., '67a3b2c1d4e5f6a7b8c9d0e1')"
+                        }
+                    },
+                    required: ["id"]
+                }
+            },
+            {
+                name: "disable_alert",
+                description: "Disable (unschedule) a Graylog event definition / alert by its ID. Use list_event_definitions first to find the ID.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        id: {
+                            type: "string",
+                            description: "The event definition ID to disable (e.g., '67a3b2c1d4e5f6a7b8c9d0e1')"
+                        }
+                    },
+                    required: ["id"]
+                }
             }
         ]
     };
@@ -363,6 +419,9 @@ async function dispatchTool(name, args) {
         case "get_system_info":       return await getSystemInfo();
         case "analyze_incident":      return await analyzeIncident(args);
         case "aggregate_logs":        return await aggregateLogs(args);
+        case "list_event_definitions": return await listEventDefinitions();
+        case "enable_alert":           return await enableAlert(args);
+        case "disable_alert":          return await disableAlert(args);
         default:
             throw new Error(`Unknown tool: ${name}`);
     }
@@ -880,6 +939,60 @@ async function analyzeIncident(args) {
         content: [{
             type: "text",
             text: JSON.stringify(result, null, 2)
+        }]
+    };
+}
+
+// ============================================================================
+// ALERT MANAGEMENT TOOLS · list_event_definitions, enable_alert, disable_alert
+// ============================================================================
+
+async function listEventDefinitions() {
+    const data = await graylogRequest('/api/events/definitions', { per_page: 200 });
+
+    const definitions = (data.event_definitions || [])
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map(d => ({
+            id: d.id,
+            title: d.title,
+            description: d.description || '',
+            enabled: d.scheduler?.is_scheduled ?? true,
+            priority: d.priority,
+            alert: d.alert
+        }));
+
+    return {
+        content: [{
+            type: "text",
+            text: JSON.stringify({ total: definitions.length, event_definitions: definitions }, null, 2)
+        }]
+    };
+}
+
+async function enableAlert(args) {
+    const { id } = args;
+    if (!id || typeof id !== 'string' || !id.trim()) {
+        throw new Error("'id' parameter is required and must be a non-empty string");
+    }
+    await graylogRequestPut(`/api/events/definitions/${id.trim()}/schedule`);
+    return {
+        content: [{
+            type: "text",
+            text: JSON.stringify({ success: true, id: id.trim(), status: "enabled" }, null, 2)
+        }]
+    };
+}
+
+async function disableAlert(args) {
+    const { id } = args;
+    if (!id || typeof id !== 'string' || !id.trim()) {
+        throw new Error("'id' parameter is required and must be a non-empty string");
+    }
+    await graylogRequestPut(`/api/events/definitions/${id.trim()}/unschedule`);
+    return {
+        content: [{
+            type: "text",
+            text: JSON.stringify({ success: true, id: id.trim(), status: "disabled" }, null, 2)
         }]
     };
 }
